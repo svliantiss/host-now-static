@@ -38,6 +38,8 @@ createServer(async (req, res) => {
     const rel = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
     if (rel.includes('..')) { res.writeHead(400).end(); return; }
     const file = join(ROOT, host, ...rel.split('/'));
+    const looksLikeFile = /\.[a-z0-9]{1,8}$/i.test(rel);
+    if (!existsSync(file) && looksLikeFile) { res.writeHead(404, { 'content-type':'text/plain' }).end('not found'); return; }
     if (!existsSync(file)) {
       const index = join(ROOT, host, 'index.html');
       if (!existsSync(index)) { res.writeHead(404, { 'content-type':'text/html' }).end('<!doctype html><title>not found</title><h1>This site is not here</h1><p>It may have expired.</p>'); return; }
