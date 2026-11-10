@@ -1,6 +1,6 @@
 // host-now static origin: serves published folders by Host header, never executes them.
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -33,6 +33,18 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, site, files: n, bytes }));
     return;
   }
+  if (req.method === 'POST' && req.url === '/_delete') {
+    if (!TOKEN || req.headers['x-static-token'] !== TOKEN) { res.writeHead(401).end('no'); return; }
+    let body = ''; for await (const c of req) body += c;
+    let payload; try { payload = JSON.parse(body); } catch { res.writeHead(400).end('bad json'); return; }
+    const site = String(payload.site ?? '').replace(/[^a-z0-9-]/g, '');
+    if (!site) { res.writeHead(400).end('no site'); return; }
+    // Removes the published folder so an expired or deleted site stops serving immediately.
+    rmSync(join(ROOT, site), { recursive: true, force: true });
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, deleted: site }));
+    return;
+  }
+
   if (req.method === 'GET' || req.method === 'HEAD') {
     const url = (req.url ?? '/').split('?')[0];
     const rel = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
