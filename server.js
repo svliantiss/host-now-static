@@ -55,7 +55,14 @@ createServer(async (req, res) => {
     if (!existsSync(file)) {
       // The static app's own disk is wiped by every redeploy, so fall back to the API, which
       // keeps the published bytes in Postgres. Serve, then cache locally.
-      const upstream = await fetch(`https://api.host.abslm.nl/s/${host}/${rel}`).catch(() => null);
+      // Prefer the internal service address: a container on this host cannot reliably reach the
+      // public hostname through the NAT (hairpin). Never send client headers upstream.
+      const base = (process.env.API_INTERNAL ?? 'https://api.host.abslm.nl').replace(/\/$/, '');
+      const upstream = await fetch(`${base}/s/${encodeURIComponent(host)}/${rel.split('/').map(encodeURIComponent).join('/')}`, {
+        signal: AbortSignal.timeout(5_000),
+        headers: { accept: 'text/html,application/octet-stream' },
+      }).catch((err) => { console.error('fallback failed:', base, err.name ?? err.message); return null; });
+      if (upstream && !upstream.ok) console.error('fallback not ok:', base, upstream.status, host, rel);
       if (!upstream || !upstream.ok) {
         const index = join(ROOT, host, 'index.html');
         if (!existsSync(index)) { res.writeHead(404, { 'content-type':'text/html' }).end('<!doctype html><title>not found</title><h1>This site is not here</h1><p>It may have expired.</p>'); return; }
@@ -63,6 +70,7 @@ createServer(async (req, res) => {
         return;
       }
       const buf = Buffer.from(await upstream.arrayBuffer());
+      if (buf.length > 8 * 1024 * 1024) { res.writeHead(502).end('too large'); return; }
       try { mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, buf); } catch { /* read only */ }
       res.writeHead(200, { 'content-type': MIME[ext(rel)] ?? 'application/octet-stream', 'content-length': buf.length, 'x-content-type-options': 'nosniff' });
       return res.end(buf);
