@@ -53,10 +53,19 @@ createServer(async (req, res) => {
     const looksLikeFile = /\.[a-z0-9]{1,8}$/i.test(rel);
     if (!existsSync(file) && looksLikeFile) { res.writeHead(404, { 'content-type':'text/plain' }).end('not found'); return; }
     if (!existsSync(file)) {
-      const index = join(ROOT, host, 'index.html');
-      if (!existsSync(index)) { res.writeHead(404, { 'content-type':'text/html' }).end('<!doctype html><title>not found</title><h1>This site is not here</h1><p>It may have expired.</p>'); return; }
-      res.writeHead(200, { 'content-type': MIME['.html'] }).end(readFileSync(index));
-      return;
+      // The static app's own disk is wiped by every redeploy, so fall back to the API, which
+      // keeps the published bytes in Postgres. Serve, then cache locally.
+      const upstream = await fetch(`https://api.host.abslm.nl/s/${host}/${rel}`).catch(() => null);
+      if (!upstream || !upstream.ok) {
+        const index = join(ROOT, host, 'index.html');
+        if (!existsSync(index)) { res.writeHead(404, { 'content-type':'text/html' }).end('<!doctype html><title>not found</title><h1>This site is not here</h1><p>It may have expired.</p>'); return; }
+        res.writeHead(200, { 'content-type': MIME['.html'] }).end(readFileSync(index));
+        return;
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      try { mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, buf); } catch { /* read only */ }
+      res.writeHead(200, { 'content-type': MIME[ext(rel)] ?? 'application/octet-stream', 'content-length': buf.length, 'x-content-type-options': 'nosniff' });
+      return res.end(buf);
     }
     const body = readFileSync(file);
     res.writeHead(200, { 'content-type': MIME[ext(rel)] ?? 'application/octet-stream', 'content-length': body.length, 'x-content-type-options': 'nosniff' }).end(req.method === 'HEAD' ? undefined : body);
