@@ -51,7 +51,6 @@ createServer(async (req, res) => {
     if (rel.includes('..')) { res.writeHead(400).end(); return; }
     const file = join(ROOT, host, ...rel.split('/'));
     const looksLikeFile = /\.[a-z0-9]{1,8}$/i.test(rel);
-    if (!existsSync(file) && looksLikeFile) { res.writeHead(404, { 'content-type':'text/plain' }).end('not found'); return; }
     if (!existsSync(file)) {
       // The static app's own disk is wiped by every redeploy, so fall back to the API, which
       // keeps the published bytes in Postgres. Serve, then cache locally.
@@ -64,6 +63,8 @@ createServer(async (req, res) => {
       }).catch((err) => { console.error('fallback failed:', base, err.name ?? err.message); return null; });
       if (upstream && !upstream.ok) console.error('fallback not ok:', base, upstream.status, host, rel);
       if (!upstream || !upstream.ok) {
+        // A missing asset stays a 404; only a page request falls back to index.
+        if (looksLikeFile) { res.writeHead(404, { 'content-type': 'text/plain' }).end('not found'); return; }
         const index = join(ROOT, host, 'index.html');
         if (!existsSync(index)) { res.writeHead(404, { 'content-type':'text/html' }).end('<!doctype html><title>not found</title><h1>This site is not here</h1><p>It may have expired.</p>'); return; }
         res.writeHead(200, { 'content-type': MIME['.html'] }).end(readFileSync(index));
